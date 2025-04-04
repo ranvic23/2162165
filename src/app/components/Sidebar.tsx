@@ -54,8 +54,8 @@ const Sidebar = () => {
   if (hideSidebarRoutes.includes(pathname)) return null;
 
   return (
-    <aside className="w-full h-screen flex flex-col bg-white text-black p-4 max-w-[18rem] bg-clip-border shadow-xl shadow-blue-gray-900/5">
-      <div className="p-4 mb-2">
+    <aside className="fixed top-0 left-0 h-screen flex flex-col bg-white text-black p-4 w-[18rem] bg-clip-border shadow-xl shadow-blue-gray-900/5 overflow-y-auto">
+      <div className="p-4 mb-2 sticky top-0 bg-white z-10">
         <h5 className="block font-sans text-xl antialiased font-semibold leading-snug tracking-normal text-blue-gray-900">
           BBNKA
         </h5>
@@ -95,7 +95,7 @@ const Sidebar = () => {
 
           {/* Orders Dropdown items */}
           {isOrdersOpen && (
-            <div className="ml-6 mt-2 space-y-1">
+            <div className="ml-6 mt-2 space-y-1 max-h-[300px] overflow-y-auto">
               <Link href="/orders">
                 <div
                   role="button"
@@ -155,7 +155,7 @@ const Sidebar = () => {
 
           {/* Dropdown items */}
           {isInventoryOpen && (
-            <div className="ml-6 mt-2 space-y-1">
+            <div className="ml-6 mt-2 space-y-1 max-h-[300px] overflow-y-auto">
               <Link href="/inventory/products">
                 <div
                   role="button"
@@ -226,7 +226,7 @@ const Sidebar = () => {
 
           {/* Dropdown items */}
           {isContentManagementOpen && (
-            <div className="ml-6 mt-2 space-y-1">
+            <div className="ml-6 mt-2 space-y-1 max-h-[300px] overflow-y-auto">
               <Link href="/content/promotions">
                 <div
                   role="button"

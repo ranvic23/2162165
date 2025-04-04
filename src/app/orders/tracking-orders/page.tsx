@@ -13,6 +13,10 @@ import {
   doc,
   updateDoc,
   DocumentReference,
+  addDoc,
+  serverTimestamp,
+  getDocs,
+  where,
 } from "firebase/firestore";
 
 interface Order {
@@ -31,6 +35,7 @@ interface Order {
     paymentStatus?: string;
     gcashReference?: string;
     createdAt: string;
+    updatedAt?: string;
   };
   items: Array<{
     cartId: string;
@@ -40,6 +45,27 @@ interface Order {
     productPrice: number;
   }>;
   ref?: DocumentReference;
+}
+
+interface TrackingOrder {
+  orderId: string;
+  userId: string;
+  customerName: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  orderStatus: string;
+  createdAt: Date;
+  updatedAt: Date;
+  pickupTime: string;
+  pickupDate: string;
+  totalAmount: number;
+  items: Array<{
+    cartId: string;
+    productSize: string;
+    productVarieties: string[];
+    productQuantity: number;
+    productPrice: number;
+  }>;
 }
 
 export default function TrackingOrders() {
@@ -77,6 +103,51 @@ export default function TrackingOrders() {
     }
   };
 
+  // Function to save tracking order to Firestore
+  const saveTrackingOrder = async (order: Order) => {
+    try {
+      const trackingOrder: TrackingOrder = {
+        orderId: order.id,
+        userId: order.userId,
+        customerName: order.userDetails ? `${order.userDetails.firstName} ${order.userDetails.lastName}` : 'Unknown',
+        paymentMethod: order.orderDetails.paymentMethod,
+        paymentStatus: order.orderDetails.paymentStatus || 'unknown',
+        orderStatus: order.orderDetails.status || 'unknown',
+        createdAt: new Date(order.orderDetails.createdAt),
+        updatedAt: new Date(),
+        pickupTime: order.orderDetails.pickupTime,
+        pickupDate: order.orderDetails.pickupDate,
+        totalAmount: order.orderDetails.totalAmount,
+        items: order.items
+      };
+
+      console.log("Tracking Order Data:", trackingOrder);
+
+      // Check if tracking order already exists
+      const trackingRef = collection(db, "tracking_orders");
+      const trackingQuery = query(trackingRef, where("orderId", "==", order.id));
+      const trackingSnapshot = await getDocs(trackingQuery);
+
+      if (trackingSnapshot.empty) {
+        // If tracking order doesn't exist, create new one
+        await addDoc(trackingRef, {
+          ...trackingOrder,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        // If tracking order exists, update it
+        const trackingDoc = trackingSnapshot.docs[0];
+        await updateDoc(trackingDoc.ref, {
+          ...trackingOrder,
+          updatedAt: serverTimestamp()
+        });
+      }
+    } catch (error) {
+      console.error("Error saving tracking order:", error);
+    }
+  };
+
   // Real-time orders subscription
   useEffect(() => {
     const ordersRef = collection(db, "orders");
@@ -97,7 +168,20 @@ export default function TrackingOrders() {
             } as Order;
           })
         );
-        setOrders(orderList);
+        // Filter orders to exclude pending payments
+        const filteredOrders = orderList.filter(order => {
+          // For GCash payments, only show if payment is approved
+          if (order.orderDetails.paymentMethod === 'GCash') {
+            return order.orderDetails.paymentStatus === 'approved';
+          }
+          // For non-GCash payments, show all orders except pending ones
+          return order.orderDetails.paymentStatus !== 'pending';
+        });
+
+        // Save filtered orders to tracking_orders collection
+        await Promise.all(filteredOrders.map(order => saveTrackingOrder(order)));
+
+        setOrders(filteredOrders);
         setLoading(false);
       },
       (error) => {
@@ -117,10 +201,24 @@ export default function TrackingOrders() {
         return;
       }
 
+      // Update order status in orders collection
       await updateDoc(order.ref, {
         "orderDetails.status": newStatus,
         "orderDetails.updatedAt": new Date().toISOString(),
       });
+
+      // Update tracking order status
+      const trackingRef = collection(db, "tracking_orders");
+      const trackingQuery = query(trackingRef, where("orderId", "==", orderId));
+      const trackingSnapshot = await getDocs(trackingQuery);
+
+      if (!trackingSnapshot.empty) {
+        const trackingDoc = trackingSnapshot.docs[0];
+        await updateDoc(trackingDoc.ref, {
+          orderStatus: newStatus,
+          updatedAt: serverTimestamp()
+        });
+      }
     } catch (error) {
       console.error("Error updating order status:", error);
       alert("Failed to update order status.");
@@ -138,7 +236,7 @@ export default function TrackingOrders() {
   });
 
   const getStatusColor = (status: string | undefined) => {
-    if (!status) return "bg-gray-100 text-gray-800"; // Default color for undefined status
+    if (!status) return "bg-gray-100 text-gray-800";
     switch (status.toLowerCase()) {
       case "order placed":
         return "bg-blue-100 text-blue-800";
@@ -157,6 +255,15 @@ export default function TrackingOrders() {
     }
   };
 
+  const getPaymentMethodBadge = (paymentMethod: string, paymentStatus?: string) => {
+    if (paymentMethod === 'GCash') {
+      return paymentStatus === 'approved' 
+        ? 'bg-green-100 text-green-800' 
+        : 'bg-yellow-100 text-yellow-800';
+    }
+    return 'bg-blue-100 text-blue-800';
+  };
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("en-US", {
       year: "numeric",
@@ -168,19 +275,19 @@ export default function TrackingOrders() {
   return (
     <ProtectedRoute>
       <div className="flex flex-col min-h-screen bg-gray-100 p-6">
-        <h1 className="text-3xl font-bold text-gray-800 mb-6">
-          Order Tracking
-        </h1>
-
-        {/* Search Bar */}
-        <div className="bg-white p-4 rounded-lg shadow-md mb-6">
-          <input
-            type="text"
-            placeholder="Search by Order ID or Customer Name..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full border p-2 rounded"
-          />
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+          <h1 className="text-3xl font-bold text-gray-800 mb-4 md:mb-0">
+            Order Tracking
+          </h1>
+          <div className="w-full md:w-auto">
+            <input
+              type="text"
+              placeholder="Search by Order ID or Customer Name..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full border p-2 rounded shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
         </div>
 
         {/* Orders Table */}
@@ -196,6 +303,9 @@ export default function TrackingOrders() {
                     Customer Name
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Payment Method
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Order Status
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -206,13 +316,15 @@ export default function TrackingOrders() {
               <tbody className="bg-white divide-y divide-gray-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={4} className="text-center py-4">
-                      Loading orders...
+                    <td colSpan={5} className="text-center py-4">
+                      <div className="flex items-center justify-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                      </div>
                     </td>
                   </tr>
                 ) : filteredOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="text-center py-4">
+                    <td colSpan={5} className="text-center py-4">
                       No orders found.
                     </td>
                   </tr>
@@ -235,10 +347,16 @@ export default function TrackingOrders() {
                         </div>
                       </td>
                       <td className="px-6 py-4">
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPaymentMethodBadge(order.orderDetails.paymentMethod, order.orderDetails.paymentStatus)}`}>
+                          {order.orderDetails.paymentMethod}
+                          {order.orderDetails.paymentMethod === 'GCash' && order.orderDetails.paymentStatus === 'approved' && ' (Approved)'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
                         <select
                           value={order.orderDetails.status}
                           onChange={(e) => handleStatusUpdate(order.id, e.target.value)}
-                          className={`px-2 py-1 rounded text-sm ${getStatusColor(order.orderDetails.status)}`}
+                          className={`px-2 py-1 rounded text-sm ${getStatusColor(order.orderDetails.status)} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
                         >
                           <option value="Order Confirmed">Order Confirmed</option>
                           <option value="Preparing Order">Preparing Order</option>
@@ -249,8 +367,8 @@ export default function TrackingOrders() {
                       </td>
                       <td className="px-6 py-4">
                         <button
-                          onClick={() => router.push(`/orders?orderId=${order.id}`)}
-                          className="text-blue-600 hover:text-blue-900 text-sm"
+                          onClick={() => router.push(`/orders/${order.id}`)}
+                          className="text-blue-600 hover:text-blue-900 text-sm font-medium"
                         >
                           View Details
                         </button>
