@@ -95,7 +95,7 @@ export default function InventoryReports() {
                 return {
                     id: doc.id,
                     ...data,
-                    price: sizesMap.get(data.sizeName) || 0, // Ensure price is fetched correctly
+                    price: sizesMap.get(data.sizeName) || 0,
                     lastUpdated: data.lastUpdated?.toDate() || new Date()
                 };
             }) as StockReport[];
@@ -105,6 +105,23 @@ export default function InventoryReports() {
             const totalValue = stocksData.reduce((sum, item) => 
                 sum + (item.quantity * (sizesMap.get(item.sizeName) || 0)), 0);
             setTotalInventoryValue(totalValue);
+
+            // Calculate COGS from sales data
+            const salesRef = collection(db, "sales");
+            const salesQuery = query(salesRef, orderBy("date", "desc"));
+            const salesSnapshot = await getDocs(salesQuery);
+            
+            let totalCOGS = 0;
+            salesSnapshot.docs.forEach(doc => {
+                const saleData = doc.data();
+                // Calculate COGS for each item in the sale
+                saleData.items.forEach((item: any) => {
+                    const itemPrice = sizesMap.get(item.size) || 0;
+                    totalCOGS += itemPrice * item.quantity;
+                });
+            });
+            
+            setCogsValue(totalCOGS);
 
             // Fetch movement history
             const movementsSnapshot = await getDocs(
@@ -136,11 +153,27 @@ export default function InventoryReports() {
             setMovementReports(movementsData);
 
             // Fetch orders
-            const ordersSnapshot = await getDocs(collection(db, "orders"));
-            const ordersData = ordersSnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            })) as OrderReport[];
+            const ordersSnapshot = await getDocs(
+                query(
+                    collection(db, "orders"),
+                    where("orderDetails.status", "==", "Completed"),
+                    orderBy("orderDetails.completedAt", "desc")
+                )
+            );
+            
+            const ordersData = ordersSnapshot.docs.map(doc => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    ...data,
+                    completedAt: data.orderDetails?.completedAt || data.orderDetails?.updatedAt,
+                    items: data.items.map((item: any) => ({
+                        ...item,
+                        price: sizesMap.get(item.productSize) || 0
+                    }))
+                };
+            }) as OrderReport[];
+            
             setOrderReports(ordersData);
 
         } catch (error) {

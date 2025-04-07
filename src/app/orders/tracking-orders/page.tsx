@@ -17,6 +17,8 @@ import {
   serverTimestamp,
   getDocs,
   where,
+  runTransaction,
+  Timestamp
 } from "firebase/firestore";
 
 interface Order {
@@ -201,27 +203,108 @@ export default function TrackingOrders() {
         return;
       }
 
-      // Update order status in orders collection
-      await updateDoc(order.ref, {
-        "orderDetails.status": newStatus,
-        "orderDetails.updatedAt": new Date().toISOString(),
+      // Start a transaction for any status update
+      await runTransaction(db, async (transaction) => {
+        // Get the order document reference
+        const orderRef = doc(db, "orders", orderId);
+        const orderDoc = await transaction.get(orderRef);
+        
+        if (!orderDoc.exists()) {
+          throw new Error("Order not found");
+        }
+
+        // If the new status is "Ready for Pickup", reduce stock
+        if (newStatus === "Ready for Pickup") {
+          // For each item in the order
+          for (const item of order.items) {
+            // Find the matching stock by size and varieties
+            const stocksRef = collection(db, "stocks");
+            const stockQuery = query(
+              stocksRef,
+              where("sizeName", "==", item.productSize),
+              where("varieties", "array-contains-any", item.productVarieties)
+            );
+            
+            const stockSnapshot = await getDocs(stockQuery);
+            
+            if (stockSnapshot.empty) {
+              throw new Error(`No stock found for ${item.productSize} with varieties ${item.productVarieties.join(", ")}`);
+            }
+
+            // Get the first matching stock
+            const stockDoc = stockSnapshot.docs[0];
+            const stockData = stockDoc.data();
+
+            // Check if there's enough stock
+            if (stockData.quantity < item.productQuantity) {
+              throw new Error(`Insufficient stock for ${item.productSize} with varieties ${item.productVarieties.join(", ")}`);
+            }
+
+            // Update the stock quantity
+            const newQuantity = stockData.quantity - item.productQuantity;
+            
+            // Update stock document
+            transaction.update(stockDoc.ref, {
+              quantity: newQuantity,
+              lastUpdated: new Date()
+            });
+
+            // Add stock history entry
+            const historyRef = doc(collection(db, "stockHistory"));
+            transaction.set(historyRef, {
+              varieties: item.productVarieties,
+              sizeName: item.productSize,
+              type: 'out',
+              quantity: item.productQuantity,
+              previousStock: stockData.quantity,
+              currentStock: newQuantity,
+              date: new Date(),
+              updatedBy: "System",
+              remarks: `Order ${orderId} ready for pickup`,
+              stockId: stockDoc.id,
+              isDeleted: false
+            });
+          }
+        }
+        
+        // If the new status is "Completed", update sales data
+        if (newStatus === "Completed") {
+          // Add to sales collection
+          const salesRef = doc(collection(db, "sales"));
+          transaction.set(salesRef, {
+            orderId: orderId,
+            amount: order.orderDetails.totalAmount,
+            date: Timestamp.fromDate(new Date()),
+            items: order.items.map(item => ({
+              size: item.productSize,
+              varieties: item.productVarieties,
+              quantity: item.productQuantity,
+              price: item.productPrice,
+              subtotal: item.productQuantity * item.productPrice
+            })),
+            paymentMethod: order.orderDetails.paymentMethod,
+            customerName: order.userDetails ? `${order.userDetails.firstName} ${order.userDetails.lastName}` : 'Unknown'
+          });
+
+          // Update inventory valuation
+          // This will be reflected in the inventory reports automatically
+          // through the existing queries
+        }
+
+        // Update order status
+        transaction.update(orderRef, {
+          "orderDetails.status": newStatus,
+          "orderDetails.updatedAt": new Date().toISOString(),
+          ...(newStatus === "Completed" ? {
+            "orderDetails.completedAt": new Date().toISOString()
+          } : {})
+        });
       });
 
-      // Update tracking order status
-      const trackingRef = collection(db, "tracking_orders");
-      const trackingQuery = query(trackingRef, where("orderId", "==", orderId));
-      const trackingSnapshot = await getDocs(trackingQuery);
-
-      if (!trackingSnapshot.empty) {
-        const trackingDoc = trackingSnapshot.docs[0];
-        await updateDoc(trackingDoc.ref, {
-          orderStatus: newStatus,
-          updatedAt: serverTimestamp()
-        });
-      }
+      alert(`Order ${newStatus === "Completed" ? "completed and sales updated" : "status updated"} successfully!`);
     } catch (error) {
       console.error("Error updating order status:", error);
-      alert("Failed to update order status.");
+      alert(error instanceof Error ? error.message : "Failed to update order status.");
     }
   };
 

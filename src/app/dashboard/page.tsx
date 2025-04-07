@@ -5,7 +5,7 @@ import { signOut } from "firebase/auth";
 import { auth } from "../firebase-config";
 import ProtectedRoute from "@/app/components/protectedroute";
 import { useEffect, useState } from "react";
-import { collection, getDocs, query, where, orderBy, limit, Timestamp } from "firebase/firestore";
+import { collection, getDocs, query, where, orderBy, limit, Timestamp, getDoc, doc } from "firebase/firestore";
 import { db } from "../firebase-config"; // Adjust the import based on your setup
 import { Line, Bar, Doughnut } from 'react-chartjs-2';
 import {
@@ -92,6 +92,21 @@ interface Stock {
   category: string;
   location: string;
   remarks: string;
+}
+
+interface OrderData {
+  userId: string;
+  orderDetails: {
+    totalAmount: number;
+    status: string;
+    completedAt: string;
+    updatedAt: string;
+  };
+}
+
+interface CustomerData {
+  firstName: string;
+  lastName: string;
 }
 
 export default function Dashboard() {
@@ -184,8 +199,9 @@ export default function Dashboard() {
     try {
       const now = new Date();
       const dayStart = new Date(now.setHours(0, 0, 0, 0));
-      const weekStart = new Date(now.setDate(now.getDate() - 7));
-      const monthStart = new Date(now.setDate(1));
+      const weekStart = new Date(now);
+      weekStart.setDate(now.getDate() - 7);
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
       const salesRef = collection(db, "sales");
       
@@ -214,7 +230,42 @@ export default function Dashboard() {
       const monthlySales = monthlySnapshot.docs.reduce((acc, doc) => acc + doc.data().amount, 0);
 
       setSalesData({ daily: dailySales, weekly: weeklySales, monthly: monthlySales });
-      setTotalRevenue(monthlySales); // Using monthly sales as total revenue
+      setTotalRevenue(monthlySales);
+
+      // Prepare sales trend data
+      const last7DaysData = [];
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date();
+        date.setDate(date.getDate() - i);
+        date.setHours(0, 0, 0, 0);
+        const nextDate = new Date(date);
+        nextDate.setDate(date.getDate() + 1);
+
+        const dayQuery = query(
+          salesRef,
+          where("date", ">=", Timestamp.fromDate(date)),
+          where("date", "<", Timestamp.fromDate(nextDate))
+        );
+        const daySnapshot = await getDocs(dayQuery);
+        const dayTotal = daySnapshot.docs.reduce((acc, doc) => acc + doc.data().amount, 0);
+        
+        last7DaysData.push({
+          date: date.toLocaleDateString('en-US', { weekday: 'short' }),
+          amount: dayTotal
+        });
+      }
+
+      setSalesChartData({
+        labels: last7DaysData.map(d => d.date),
+        datasets: [{
+          label: 'Daily Sales',
+          data: last7DaysData.map(d => d.amount),
+          borderColor: 'rgb(75, 192, 192)',
+          backgroundColor: 'rgba(75, 192, 192, 0.5)',
+          tension: 0.1
+        }]
+      });
+
     } catch (error) {
       console.error("Error fetching sales data:", error);
       setNotifications(prev => [...prev, { message: "Failed to fetch sales data", type: 'error' }]);
@@ -223,18 +274,59 @@ export default function Dashboard() {
 
   const fetchPopularProducts = async () => {
     try {
-      const ordersRef = collection(db, "orders");
-      const popularQuery = query(ordersRef, orderBy("quantity", "desc"), limit(5));
-      const snapshot = await getDocs(popularQuery);
+      const salesRef = collection(db, "sales");
+      const salesQuery = query(salesRef, orderBy("date", "desc"));
+      const salesSnapshot = await getDocs(salesQuery);
       
-      const products = snapshot.docs.map(doc => ({
-        id: doc.id,
-        name: doc.data().productName,
-        totalSold: doc.data().quantity,
-        revenue: doc.data().amount
-      }));
-      
-      setPopularProducts(products);
+      // Aggregate product sales
+      const productSales = new Map();
+      salesSnapshot.docs.forEach(doc => {
+        const saleData = doc.data();
+        saleData.items.forEach((item: any) => {
+          const key = `${item.size} - ${item.varieties.join(", ")}`;
+          if (!productSales.has(key)) {
+            productSales.set(key, {
+              name: key,
+              totalSold: 0,
+              revenue: 0
+            });
+          }
+          const product = productSales.get(key);
+          product.totalSold += item.quantity;
+          product.revenue += item.subtotal;
+        });
+      });
+
+      // Convert to array and sort by total sold
+      const popularProducts = Array.from(productSales.values())
+        .sort((a, b) => b.totalSold - a.totalSold)
+        .slice(0, 5);
+
+      setPopularProducts(popularProducts);
+
+      // Update product chart
+      setProductChartData({
+        labels: popularProducts.map(p => p.name),
+        datasets: [{
+          label: 'Products Sold',
+          data: popularProducts.map(p => p.totalSold),
+          backgroundColor: [
+            'rgba(255, 99, 132, 0.5)',
+            'rgba(54, 162, 235, 0.5)',
+            'rgba(255, 206, 86, 0.5)',
+            'rgba(75, 192, 192, 0.5)',
+            'rgba(153, 102, 255, 0.5)',
+          ],
+          borderColor: [
+            'rgba(255, 99, 132, 1)',
+            'rgba(54, 162, 235, 1)',
+            'rgba(255, 206, 86, 1)',
+            'rgba(75, 192, 192, 1)',
+            'rgba(153, 102, 255, 1)',
+          ],
+          borderWidth: 1
+        }]
+      });
     } catch (error) {
       console.error("Error fetching popular products:", error);
       setNotifications(prev => [...prev, { message: "Failed to fetch popular products", type: 'error' }]);
@@ -244,15 +336,36 @@ export default function Dashboard() {
   const fetchRecentOrders = async () => {
     try {
       const ordersRef = collection(db, "orders");
-      const recentQuery = query(ordersRef, orderBy("date", "desc"), limit(5));
+      const recentQuery = query(
+        ordersRef,
+        where("orderDetails.status", "==", "Completed"),
+        orderBy("orderDetails.completedAt", "desc"),
+        limit(5)
+      );
       const snapshot = await getDocs(recentQuery);
       
-      const orders = snapshot.docs.map(doc => ({
-        id: doc.id,
-        customerName: doc.data().customerName,
-        total: doc.data().total,
-        status: doc.data().status,
-        date: doc.data().date.toDate()
+      const orders = await Promise.all(snapshot.docs.map(async (docSnapshot) => {
+        const data = docSnapshot.data() as OrderData;
+        let customerName = "Unknown Customer";
+        
+        if (data.userId) {
+          const customerRef = doc(db, "customers", data.userId);
+          const customerDoc = await getDoc(customerRef);
+          if (customerDoc.exists()) {
+            const customerData = customerDoc.data() as CustomerData;
+            customerName = `${customerData.firstName} ${customerData.lastName}`;
+          }
+        }
+
+        return {
+          id: docSnapshot.id,
+          customerName,
+          total: data.orderDetails.totalAmount,
+          status: data.orderDetails.status,
+          date: data.orderDetails.completedAt
+            ? new Date(data.orderDetails.completedAt)
+            : new Date(data.orderDetails.updatedAt)
+        };
       }));
       
       setRecentOrders(orders);

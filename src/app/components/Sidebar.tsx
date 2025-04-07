@@ -129,6 +129,17 @@ const Sidebar = () => {
                   Tracking Orders
                 </div>
               </Link>
+              <Link href="/orders/completed-orders">
+                <div
+                  role="button"
+                  className="flex items-center w-full p-3 leading-tight transition-all rounded-lg outline-none text-start hover:bg-bg-light-brown hover:bg-opacity-80 hover:text-white focus:bg-blue-gray-50 focus:bg-opacity-80 focus:text-blue-gray-900 active:bg-blue-gray-50 active:bg-opacity-80 active:text-blue-gray-900"
+                >
+                  <div className="grid mr-4 place-items-center">
+                    <PackageCheck className="w-5 h-5" />
+                  </div>
+                  Completed Orders
+                </div>
+              </Link>
             </div>
           )}
         </div>
