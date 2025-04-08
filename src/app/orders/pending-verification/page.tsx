@@ -49,6 +49,23 @@ interface Order {
   ref?: any;
 }
 
+const statusFlow = [
+  "Order Confirmed",
+  "Preparing Order",
+  "Ready for Pickup",
+  "Completed",
+  "Cancelled"
+];
+
+// Function to get available statuses based on current status
+const getAvailableStatuses = (currentStatus: string) => {
+  const currentIndex = statusFlow.indexOf(currentStatus);
+  if (currentIndex === -1) return statusFlow; // Default to all statuses if not found
+
+  // Return all statuses, but we will disable the previous ones in the dropdown
+  return statusFlow;
+};
+
 export default function PendingVerificationPage() {
   const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
@@ -346,7 +363,15 @@ export default function PendingVerificationPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredOrders.length > 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={9} className="text-center py-4">
+                    <div className="flex items-center justify-center">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredOrders.length > 0 ? (
                 filteredOrders.map((order) => (
                   <tr key={order.id} className="hover:bg-gray-50">
                     <td className="py-3 px-4 border-b">

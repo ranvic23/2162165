@@ -124,6 +124,13 @@ export default function CompletedOrders() {
     });
   };
 
+  const formatTime = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   return (
     <ProtectedRoute>
       <div className="flex min-h-screen bg-gray-100">
@@ -218,6 +225,9 @@ export default function CompletedOrders() {
                         <td className="px-6 py-4">
                           <div className="text-sm text-gray-900">
                             {formatDate(order.orderDetails.createdAt)}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {formatTime(order.orderDetails.createdAt)}
                           </div>
                         </td>
                       </tr>

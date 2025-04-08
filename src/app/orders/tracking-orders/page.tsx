@@ -75,6 +75,14 @@ export default function TrackingOrders() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const router = useRouter();
+  
+  // Define status flow at component level
+  const statusFlow = [
+    "Order Confirmed",
+    "Preparing Order",
+    "Ready for Pickup",
+    "Completed"
+  ];
 
   // Function to fetch user details
   const fetchUserDetails = async (userId: string) => {
@@ -114,7 +122,7 @@ export default function TrackingOrders() {
         customerName: order.userDetails ? `${order.userDetails.firstName} ${order.userDetails.lastName}` : 'Unknown',
         paymentMethod: order.orderDetails.paymentMethod,
         paymentStatus: order.orderDetails.paymentStatus || 'unknown',
-        orderStatus: order.orderDetails.status || 'unknown',
+        orderStatus: order.orderDetails.status || 'Order Confirmed',
         createdAt: new Date(order.orderDetails.createdAt),
         updatedAt: new Date(),
         pickupTime: order.orderDetails.pickupTime,
@@ -355,6 +363,14 @@ export default function TrackingOrders() {
     });
   };
 
+  const getAvailableStatuses = (currentStatus: string) => {
+    const currentIndex = statusFlow.indexOf(currentStatus);
+    if (currentIndex === -1) return statusFlow; // Return all statuses if not found
+    
+    // Return all statuses, but we'll disable the previous ones in the dropdown
+    return statusFlow;
+  };
+
   return (
     <ProtectedRoute>
       <div className="flex flex-col min-h-screen bg-gray-100 p-6">
@@ -441,10 +457,15 @@ export default function TrackingOrders() {
                           onChange={(e) => handleStatusUpdate(order.id, e.target.value)}
                           className={`px-2 py-1 rounded text-sm ${getStatusColor(order.orderDetails.status)} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
                         >
-                          <option value="Order Confirmed">Order Confirmed</option>
-                          <option value="Preparing Order">Preparing Order</option>
-                          <option value="Ready for Pickup">Ready for Pickup</option>
-                          <option value="Completed">Completed</option>
+                          {getAvailableStatuses(order.orderDetails.status).map((status) => (
+                            <option 
+                              key={status} 
+                              value={status}
+                              disabled={statusFlow.indexOf(status) < statusFlow.indexOf(order.orderDetails.status)}
+                            >
+                              {status}
+                            </option>
+                          ))}
                           <option value="Cancelled">Cancelled</option>
                         </select>
                       </td>
